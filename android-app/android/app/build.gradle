@@ -9,8 +9,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Le workflow GitHub fournit un numéro qui augmente à chaque construction :
         // Google Play refuse deux envois avec le même versionCode.
-        versionCode (project.findProperty("orbiteVersionCode") ?: "1") as Integer
-        versionName project.findProperty("orbiteVersionName") ?: "1.0"
+        versionCode Integer.parseInt((project.findProperty("orbiteVersionCode") ?: "1").toString())
+        versionName((project.findProperty("orbiteVersionName") ?: "1.0").toString())
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
