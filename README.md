@@ -18,4 +18,6 @@ Jeu d'arcade à un bouton. Votre vaisseau tourne autour d'une planète : touchez
 
 Chaque modification envoyée sur `main` publie automatiquement le jeu sur GitHub Pages. Le même workflow produit `orbite-itchio.zip`, prêt à être envoyé sur itch.io (type de projet : HTML).
 
+Un second workflow construit l'app Android pour Google Play : voir [android-app/README.md](android-app/README.md).
+
 Le jeu tient dans un seul fichier, `index.html`, sans dépendance ni étape de compilation.

@@ -1,0 +1,8 @@
+{
+  "appId": "com.llcsystems.orbite",
+  "appName": "Orbite",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#05060f"
+  }
+}
