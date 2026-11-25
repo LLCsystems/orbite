@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
@@ -14,14 +14,32 @@
 <canvas id="c"></canvas>
 <script>
 "use strict";
+// ---------- Langue : anglais par défaut, français pour les navigateurs en français ----------
+const FR = /^fr/i.test((navigator.languages && navigator.languages[0]) || navigator.language || "");
+const T = FR ? {
+  how1: "Touchez, cliquez ou appuyez sur Espace", how2: "pour quitter l'orbite.",
+  how3: "Atteignez la planète suivante,", how4: "évitez les débris, ramassez les étoiles.",
+  play: "TOUCHER POUR JOUER", again: "TOUCHER POUR REJOUER", best: "Record : ",
+  over: "PERDU !", score: "Score : ", newBest: "Nouveau record !", skip: " SAUT !",
+} : {
+  how1: "Tap, click or press Space", how2: "to break out of orbit.",
+  how3: "Reach the next planet,", how4: "dodge the debris, grab the stars.",
+  play: "TAP TO PLAY", again: "TAP TO PLAY AGAIN", best: "Best: ",
+  over: "GAME OVER", score: "Score: ", newBest: "New best!", skip: " SKIP!",
+};
+document.documentElement.lang = FR ? "fr" : "en";
 // ---------- Réglages ----------
-const W = 420, H = 740;               // résolution logique
+// Hauteur logique fixe ; la largeur s'adapte à l'écran :
+// portrait sur téléphone (420 min), paysage sur ordinateur (jusqu'à 1320).
+const H = 740, W_MIN = 420, W_MAX = 1320;
+let W = W_MIN;
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 let scale = 1, dpr = 1;
 
 function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = Math.round(Math.max(W_MIN, Math.min(W_MAX, H * window.innerWidth / Math.max(1, window.innerHeight))));
   scale = Math.min(window.innerWidth / W, window.innerHeight / H);
   canvas.style.width = (W * scale) + "px";
   canvas.style.height = (H * scale) + "px";
@@ -72,7 +90,7 @@ const PALETTE = ["#ff6b6b", "#ffd166", "#06d6a0", "#4cc9f0", "#b388ff", "#f78c6b
 
 // ---------- Fond étoilé ----------
 const bgStars = [];
-for (let i = 0; i < 140; i++) bgStars.push({ x: rand(0, W), y: rand(0, H), z: rand(0.15, 1), tw: rand(0, 6.28) });
+for (let i = 0; i < 320; i++) bgStars.push({ x: rand(0, W_MAX), y: rand(0, H), z: rand(0.15, 1), tw: rand(0, 6.28) });
 
 // ---------- État du jeu ----------
 let state = "menu";       // menu | play | over
@@ -87,7 +105,10 @@ function addPlanet() {
   const y = lastPlanetY - gap;
   const r = rand(18, 30);
   const orbitR = r + rand(30, 44);
-  const x = rand(orbitR + 20, W - orbitR - 20);
+  // En paysage, la planète suivante reste à portée horizontale de la précédente
+  const prevP = planets[planets.length - 1];
+  const lo = orbitR + 20, hi = W - orbitR - 20;
+  const x = prevP ? clamp(prevP.x + rand(-300, 300) + (W / 2 - prevP.x) * 0.35, lo, hi) : rand(lo, hi);
   const p = { x, y, r, orbitR, color: PALETTE[(Math.random() * PALETTE.length) | 0], visited: false, ring: Math.random() < 0.3, phase: rand(0, 6.28) };
   planets.push(p);
 
@@ -154,7 +175,7 @@ function capture(p) {
     }
     p.visited = true; planetsVisited++; gained++;
     score += gained;
-    popups.push({ x: p.x, y: p.y - p.r - 14, txt: gained > 1 ? "+" + gained + " SAUT !" : "+1", life: gained > 1 ? 1.4 : 1, color: p.color });
+    popups.push({ x: p.x, y: p.y - p.r - 14, txt: gained > 1 ? "+" + gained + T.skip : "+1", life: gained > 1 ? 1.4 : 1, color: p.color });
     sfx.capture(planetsVisited);
     if (gained > 1) setTimeout(() => sfx.capture(planetsVisited + 4), 90);
   } else {
@@ -273,6 +294,7 @@ function draw() {
 
   // étoiles de fond (parallaxe)
   for (const s of bgStars) {
+    if (s.x > W) continue;
     const y = ((s.y - camY * s.z * 0.3) % H + H) % H;
     ctx.globalAlpha = 0.35 + 0.35 * Math.sin(time * 2 + s.tw) * s.z + 0.3 * s.z;
     ctx.fillStyle = "#fff";
@@ -376,28 +398,28 @@ function draw() {
     ctx.fillText("ORBITE", W / 2, H * 0.34);
     ctx.shadowBlur = 0;
     ctx.font = "18px system-ui, sans-serif"; ctx.fillStyle = "#c9d3ff";
-    ctx.fillText("Touchez ou appuyez sur Espace", W / 2, H * 0.34 + 46);
-    ctx.fillText("pour quitter l'orbite.", W / 2, H * 0.34 + 70);
-    ctx.fillText("Atteignez la planète suivante,", W / 2, H * 0.34 + 106);
-    ctx.fillText("évitez les débris, ramassez les étoiles.", W / 2, H * 0.34 + 130);
+    ctx.fillText(T.how1, W / 2, H * 0.34 + 46);
+    ctx.fillText(T.how2, W / 2, H * 0.34 + 70);
+    ctx.fillText(T.how3, W / 2, H * 0.34 + 106);
+    ctx.fillText(T.how4, W / 2, H * 0.34 + 130);
     ctx.font = "bold 24px system-ui, sans-serif"; ctx.fillStyle = "#fff";
     ctx.globalAlpha = 0.6 + 0.4 * Math.sin(time * 4);
-    ctx.fillText("TOUCHER POUR JOUER", W / 2, H * 0.72);
+    ctx.fillText(T.play, W / 2, H * 0.72);
     ctx.globalAlpha = 1;
-    if (best > 0) { ctx.font = "16px system-ui, sans-serif"; ctx.fillStyle = "#ffd166"; ctx.fillText("Record : " + best, W / 2, H * 0.72 + 36); }
+    if (best > 0) { ctx.font = "16px system-ui, sans-serif"; ctx.fillStyle = "#ffd166"; ctx.fillText(T.best + best, W / 2, H * 0.72 + 36); }
   }
   if (state === "over") {
     ctx.fillStyle = "rgba(5,6,15,0.55)"; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = "#fff"; ctx.font = "bold 42px system-ui, sans-serif";
-    ctx.fillText("PERDU !", W / 2, H * 0.38);
+    ctx.fillText(T.over, W / 2, H * 0.38);
     ctx.font = "22px system-ui, sans-serif";
-    ctx.fillText("Score : " + score, W / 2, H * 0.38 + 50);
+    ctx.fillText(T.score + score, W / 2, H * 0.38 + 50);
     ctx.fillStyle = newBest ? "#06d6a0" : "#ffd166";
-    ctx.fillText(newBest ? "Nouveau record !" : "Record : " + best, W / 2, H * 0.38 + 84);
+    ctx.fillText(newBest ? T.newBest : T.best + best, W / 2, H * 0.38 + 84);
     if (overTimer > 0.6) {
       ctx.fillStyle = "#fff"; ctx.font = "bold 22px system-ui, sans-serif";
       ctx.globalAlpha = 0.6 + 0.4 * Math.sin(time * 4);
-      ctx.fillText("TOUCHER POUR REJOUER", W / 2, H * 0.62);
+      ctx.fillText(T.again, W / 2, H * 0.62);
       ctx.globalAlpha = 1;
     }
   }
