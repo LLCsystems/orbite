@@ -1,0 +1,91 @@
+name: Construire l'app Android
+
+# Construit Orbite pour Android à partir de index.html :
+# - orbite-android-test.apk : à installer directement sur un téléphone Android pour essayer ;
+# - orbite-google-play.aab : le fichier à envoyer dans la Play Console (seulement si la clé
+#   d'envoi est enregistrée dans les secrets du dépôt, voir android-app/README.md).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - index.html
+      - android-app/**
+      - .github/workflows/android.yml
+  pull_request:
+    paths:
+      - index.html
+      - android-app/**
+      - .github/workflows/android.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-app
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: android-app/package-lock.json
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Copier le jeu dans l'app
+        run: |
+          npm ci
+          npm run sync
+
+      - name: Préparer la clé d'envoi Google Play
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/orbite-upload.jks"
+            echo "ORBITE_KEYSTORE_FILE=$RUNNER_TEMP/orbite-upload.jks" >> "$GITHUB_ENV"
+            echo "SIGNE=oui" >> "$GITHUB_ENV"
+          else
+            echo "::notice::Pas de clé d'envoi dans les secrets : seul l'APK de test sera produit."
+          fi
+
+      - name: Construire
+        working-directory: android-app/android
+        env:
+          ORBITE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ORBITE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ORBITE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          # versionCode = numéro de la construction, pour qu'il augmente à chaque envoi.
+          TACHES="assembleDebug"
+          if [ "$SIGNE" = "oui" ]; then TACHES="$TACHES bundleRelease"; fi
+          ./gradlew $TACHES --no-daemon \
+            -PorbiteVersionCode=${{ github.run_number }} \
+            -PorbiteVersionName=1.0.${{ github.run_number }}
+          mkdir -p ../../sortie
+          cp app/build/outputs/apk/debug/app-debug.apk ../../sortie/orbite-android-test.apk
+          if [ "$SIGNE" = "oui" ]; then
+            cp app/build/outputs/bundle/release/app-release.aab ../../sortie/orbite-google-play.aab
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbite-android-test-apk
+          path: sortie/orbite-android-test.apk
+
+      - if: env.SIGNE == 'oui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbite-google-play-aab
+          path: sortie/orbite-google-play.aab

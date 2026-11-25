@@ -1,0 +1,18 @@
+{
+  "name": "orbite-android",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Emballage Android (Capacitor) du jeu Orbite",
+  "scripts": {
+    "copier-jeu": "node -e \"require('fs').mkdirSync('www',{recursive:true});require('fs').copyFileSync('../index.html','www/index.html')\"",
+    "sync": "npm run copier-jeu && cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/core": "8.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "4.0.0",
+    "@capacitor/cli": "8.6.2"
+  }
+}
