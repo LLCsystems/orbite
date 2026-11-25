@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Orbite</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05060f; overflow: hidden; touch-action: none; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; background: #070a1c; image-rendering: auto; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+"use strict";
+// ---------- Réglages ----------
+const W = 420, H = 740;               // résolution logique
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+let scale = 1, dpr = 1;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+  canvas.style.width = (W * scale) + "px";
+  canvas.style.height = (H * scale) + "px";
+  canvas.width = Math.round(W * scale * dpr);
+  canvas.height = Math.round(H * scale * dpr);
+}
+window.addEventListener("resize", resize);
+resize();
+
+// ---------- Sauvegarde ----------
+function loadBest() { try { return parseInt(localStorage.getItem("orbite_best") || "0", 10) || 0; } catch (e) { return 0; } }
+function saveBest(v) { try { localStorage.setItem("orbite_best", String(v)); } catch (e) {} }
+function loadMute() { try { return localStorage.getItem("orbite_mute") === "1"; } catch (e) { return false; } }
+function saveMute(v) { try { localStorage.setItem("orbite_mute", v ? "1" : "0"); } catch (e) {} }
+
+// ---------- Sons (synthétisés, aucun fichier) ----------
+let actx = null, muted = loadMute();
+function audio() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; } }
+  if (actx && actx.state === "suspended") actx.resume();
+  return actx;
+}
+function tone(freq, dur, type, vol, slide) {
+  if (muted) return;
+  const a = audio(); if (!a) return;
+  const t = a.currentTime;
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = type || "sine";
+  o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
+  g.gain.setValueAtTime(vol || 0.15, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(a.destination);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+const sfx = {
+  launch: () => tone(320, 0.18, "triangle", 0.12, 640),
+  capture: (n) => tone(440 * Math.pow(1.06, n % 12), 0.22, "sine", 0.16, 880 * Math.pow(1.06, n % 12)),
+  star: () => { tone(1200, 0.08, "square", 0.05); setTimeout(() => tone(1600, 0.1, "square", 0.05), 60); },
+  crash: () => tone(180, 0.6, "sawtooth", 0.18, 40),
+};
+
+// ---------- Outils ----------
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const dist2 = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;
+const PALETTE = ["#ff6b6b", "#ffd166", "#06d6a0", "#4cc9f0", "#b388ff", "#f78c6b", "#9be564"];
+
+// ---------- Fond étoilé ----------
+const bgStars = [];
+for (let i = 0; i < 140; i++) bgStars.push({ x: rand(0, W), y: rand(0, H), z: rand(0.15, 1), tw: rand(0, 6.28) });
+
+// ---------- État du jeu ----------
+let state = "menu";       // menu | play | over
+let best = loadBest();
+let score, planets, rocks, stars, particles, popups, ship, camY, shake, time, planetsVisited, lastPlanetY, newBest;
+
+function difficulty() { return Math.min(1, planetsVisited / 40); }
+
+function addPlanet() {
+  const d = difficulty();
+  const gap = rand(190, 250) + d * 90;
+  const y = lastPlanetY - gap;
+  const r = rand(18, 30);
+  const orbitR = r + rand(30, 44);
+  const x = rand(orbitR + 20, W - orbitR - 20);
+  const p = { x, y, r, orbitR, color: PALETTE[(Math.random() * PALETTE.length) | 0], visited: false, ring: Math.random() < 0.3, phase: rand(0, 6.28) };
+  planets.push(p);
+
+  // Débris en orbite autour de la planète (plus fréquents avec la difficulté)
+  if (planets.length > 2 && Math.random() < 0.25 + d * 0.6) {
+    const count = 1 + (Math.random() < d ? 1 : 0) + (Math.random() < d * 0.5 ? 1 : 0);
+    const rr = orbitR + rand(28, 46);
+    const spd = rand(0.6, 1.1) * (Math.random() < 0.5 ? 1 : -1) * (1 + d * 0.6);
+    const base = rand(0, 6.28);
+    for (let i = 0; i < count; i++) rocks.push({ planet: p, a: base + i * (6.28 / count), rr, spd, size: rand(7, 11), x: 0, y: 0, rot: rand(0, 6) });
+  }
+  // Étoiles entre la planète précédente et celle-ci
+  const prev = planets[planets.length - 2];
+  if (prev && Math.random() < 0.85) {
+    const n = 1 + ((Math.random() * 3) | 0);
+    for (let i = 1; i <= n; i++) {
+      const t = i / (n + 1);
+      stars.push({ x: clamp(prev.x + (x - prev.x) * t + rand(-60, 60), 20, W - 20), y: prev.y + (y - prev.y) * t, got: false, ph: rand(0, 6) });
+    }
+  }
+  lastPlanetY = y;
+}
+
+function reset() {
+  score = 0; planetsVisited = 0; time = 0; shake = 0; newBest = false;
+  planets = []; rocks = []; stars = []; particles = []; popups = [];
+  lastPlanetY = H - 160 + 220;
+  addPlanet();
+  planets[0].x = W / 2; planets[0].visited = true;
+  for (let i = 0; i < 6; i++) addPlanet();
+  const p0 = planets[0];
+  ship = { mode: "orbit", planet: p0, ang: Math.PI, dir: 1, r: p0.orbitR, x: 0, y: 0, vx: 0, vy: 0, flight: 0, left: null, trail: [] };
+  camY = p0.y - H * 0.7;
+}
+
+function shipSpeed() { return 170 + difficulty() * 110; }   // px/s
+
+function launch() {
+  if (ship.mode !== "orbit") return;
+  const sp = shipSpeed() * 1.45;
+  // vitesse tangentielle
+  const tx = -Math.sin(ship.ang) * ship.dir, ty = Math.cos(ship.ang) * ship.dir;
+  ship.vx = tx * sp; ship.vy = ty * sp;
+  ship.mode = "fly"; ship.left = ship.planet; ship.flight = 0;
+  burst(ship.x, ship.y, "#9ad7ff", 10, 90);
+  sfx.launch();
+}
+
+function capture(p) {
+  const dx = ship.x - p.x, dy = ship.y - p.y;
+  ship.mode = "orbit"; ship.planet = p;
+  ship.ang = Math.atan2(dy, dx);
+  ship.r = Math.sqrt(dx * dx + dy * dy);
+  // sens de rotation selon la vitesse d'arrivée (produit vectoriel)
+  ship.dir = (dx * ship.vy - dy * ship.vx) >= 0 ? 1 : -1;
+  if (!p.visited) {
+    p.visited = true; planetsVisited++; score += 1;
+    popups.push({ x: p.x, y: p.y - p.r - 14, txt: "+1", life: 1, color: p.color });
+    sfx.capture(planetsVisited);
+  } else {
+    sfx.capture(0);
+  }
+  burst(p.x + Math.cos(ship.ang) * ship.r, p.y + Math.sin(ship.ang) * ship.r, p.color, 14, 110);
+}
+
+function die() {
+  if (state !== "play") return;
+  state = "over"; shake = 14;
+  burst(ship.x, ship.y, "#ffffff", 30, 220);
+  burst(ship.x, ship.y, "#ff6b6b", 30, 160);
+  sfx.crash();
+  if (score > best) { best = score; newBest = true; saveBest(best); }
+  overTimer = 0;
+}
+let overTimer = 0;
+
+function burst(x, y, color, n, spd) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, 6.28), s = rand(0.2, 1) * spd;
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rand(0.4, 0.9), max: 0.9, color, size: rand(1.5, 3.5) });
+  }
+}
+
+// ---------- Entrées ----------
+function press() {
+  audio();
+  if (state === "menu") { reset(); state = "play"; return; }
+  if (state === "play") { launch(); return; }
+  if (state === "over" && overTimer > 0.6) { reset(); state = "play"; }
+}
+function toLogical(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / scale, y: (e.clientY - r.top) / scale };
+}
+canvas.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const p = toLogical(e);
+  if (p.x > W - 56 && p.y < 56) { muted = !muted; saveMute(muted); return; }   // bouton son
+  press();
+});
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Space" || e.code === "Enter" || e.code === "ArrowUp") { e.preventDefault(); if (!e.repeat) press(); }
+  if (e.code === "KeyM") { muted = !muted; saveMute(muted); }
+});
+
+// ---------- Mise à jour ----------
+function update(dt) {
+  time += dt;
+  for (const s of stars) s.ph += dt * 4;
+  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.96; p.vy *= 0.96; p.life -= dt; }
+  particles = particles.filter(p => p.life > 0);
+  for (const p of popups) { p.y -= 30 * dt; p.life -= dt; }
+  popups = popups.filter(p => p.life > 0);
+  shake = Math.max(0, shake - dt * 40);
+
+  if (state === "menu") { camY -= 20 * dt; return; }
+  if (state === "over") { overTimer += dt; return; }
+
+  // Débris
+  for (const k of rocks) { k.a += k.spd * dt; k.rot += dt * 2; k.x = k.planet.x + Math.cos(k.a) * k.rr; k.y = k.planet.y + Math.sin(k.a) * k.rr; }
+
+  // Vaisseau
+  if (ship.mode === "orbit") {
+    const p = ship.planet;
+    ship.r += (p.orbitR - ship.r) * Math.min(1, dt * 4);
+    ship.ang += ship.dir * (shipSpeed() / ship.r) * dt;
+    ship.x = p.x + Math.cos(ship.ang) * ship.r;
+    ship.y = p.y + Math.sin(ship.ang) * ship.r;
+  } else {
+    ship.flight += dt;
+    ship.x += ship.vx * dt; ship.y += ship.vy * dt;
+    for (const p of planets) {
+      if (p === ship.left && ship.flight < 0.35) continue;
+      if (dist2(ship.x, ship.y, p.x, p.y) < p.orbitR * p.orbitR) { capture(p); break; }
+    }
+    if (ship.mode === "fly") {
+      const sy = ship.y - camY;
+      if (ship.x < -30 || ship.x > W + 30 || sy > H + 30 || sy < -60 || ship.flight > 3.5) die();
+    }
+  }
+  ship.trail.push({ x: ship.x, y: ship.y });
+  if (ship.trail.length > 22) ship.trail.shift();
+
+  // Collisions
+  for (const p of planets) if (dist2(ship.x, ship.y, p.x, p.y) < (p.r + 4) ** 2) die();
+  for (const k of rocks) if (dist2(ship.x, ship.y, k.x, k.y) < (k.size + 5) ** 2) die();
+  for (const s of stars) if (!s.got && dist2(ship.x, ship.y, s.x, s.y) < 22 * 22) {
+    s.got = true; score += 1; sfx.star(); burst(s.x, s.y, "#ffe066", 10, 80);
+    popups.push({ x: s.x, y: s.y - 10, txt: "+1", life: 0.8, color: "#ffe066" });
+  }
+
+  // Caméra : suit la planète courante / le vaisseau
+  const target = (ship.mode === "orbit" ? ship.planet.y : ship.y) - H * 0.68;
+  camY += (Math.min(target, camY + 40) - camY) * Math.min(1, dt * 2.5);
+
+  // Génération et nettoyage
+  while (lastPlanetY > camY - H) addPlanet();
+  const cut = camY + H + 200;
+  planets = planets.filter(p => p.y < cut || p === ship.planet);
+  rocks = rocks.filter(k => planets.includes(k.planet));
+  stars = stars.filter(s => s.y < cut && !s.got);
+}
+
+// ---------- Dessin ----------
+function draw() {
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  ctx.fillStyle = "#070a1c"; ctx.fillRect(0, 0, W, H);
+
+  // nébuleuse
+  const g = ctx.createRadialGradient(W * 0.3, H * 0.3, 10, W * 0.3, H * 0.3, H * 0.8);
+  g.addColorStop(0, "rgba(90,60,180,0.18)"); g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  // étoiles de fond (parallaxe)
+  for (const s of bgStars) {
+    const y = ((s.y - camY * s.z * 0.3) % H + H) % H;
+    ctx.globalAlpha = 0.35 + 0.35 * Math.sin(time * 2 + s.tw) * s.z + 0.3 * s.z;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(s.x, y, s.z * 2, s.z * 2);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.save();
+  const sx = shake ? rand(-shake, shake) * 0.5 : 0, sy = shake ? rand(-shake, shake) * 0.5 : 0;
+  ctx.translate(sx, -camY + sy);
+
+  if (state !== "menu") {
+    // orbites
+    for (const p of planets) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.orbitR, 0, 6.283);
+      ctx.setLineDash([4, 7]); ctx.lineDashOffset = -time * 10;
+      ctx.strokeStyle = p === ship.planet && ship.mode === "orbit" ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.16)";
+      ctx.lineWidth = 1.5; ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  // planètes
+  for (const p of planets) {
+    const glow = ctx.createRadialGradient(p.x, p.y, p.r * 0.5, p.x, p.y, p.r * 2.2);
+    glow.addColorStop(0, p.color + "55"); glow.addColorStop(1, p.color + "00");
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 2.2, 0, 6.283); ctx.fill();
+    const body = ctx.createRadialGradient(p.x - p.r * 0.4, p.y - p.r * 0.4, p.r * 0.1, p.x, p.y, p.r);
+    body.addColorStop(0, "#ffffff"); body.addColorStop(0.25, p.color); body.addColorStop(1, "#111633");
+    ctx.fillStyle = body; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
+    if (p.ring) {
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(-0.4);
+      ctx.strokeStyle = p.color + "aa"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.ellipse(0, 0, p.r * 1.7, p.r * 0.45, 0, 0, 6.283); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  if (state !== "menu") {
+    // étoiles à ramasser
+    for (const s of stars) {
+      const r = 8 + Math.sin(s.ph) * 1.5;
+      drawStar(s.x, s.y, r, "#ffe066");
+    }
+    // débris
+    for (const k of rocks) {
+      ctx.save(); ctx.translate(k.x, k.y); ctx.rotate(k.rot);
+      ctx.fillStyle = "#8a8fa8"; ctx.strokeStyle = "#c8cbe0"; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 0; i < 7; i++) { const a = i / 7 * 6.283, rr = k.size * (0.75 + ((i * 37) % 10) / 30); ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+    // traînée
+    for (let i = 0; i < ship.trail.length; i++) {
+      const t = ship.trail[i], a = i / ship.trail.length;
+      ctx.globalAlpha = a * 0.6; ctx.fillStyle = "#9ad7ff";
+      ctx.beginPath(); ctx.arc(t.x, t.y, 1 + a * 3, 0, 6.283); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // vaisseau
+    if (state === "play") {
+      let heading;
+      if (ship.mode === "orbit") heading = ship.ang + ship.dir * Math.PI / 2;
+      else heading = Math.atan2(ship.vy, ship.vx);
+      ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(heading);
+      ctx.shadowColor = "#9ad7ff"; ctx.shadowBlur = 12;
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-7, 6); ctx.lineTo(-4, 0); ctx.lineTo(-7, -6); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      // ligne de visée en orbite
+      if (ship.mode === "orbit") {
+        ctx.strokeStyle = "rgba(154,215,255,0.25)"; ctx.lineWidth = 1; ctx.setLineDash([2, 6]);
+        ctx.beginPath(); ctx.moveTo(ship.x, ship.y);
+        ctx.lineTo(ship.x + Math.cos(heading) * 70, ship.y + Math.sin(heading) * 70); ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+  }
+  // particules
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life / p.max); ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+  // popups
+  ctx.font = "bold 18px system-ui, sans-serif"; ctx.textAlign = "center";
+  for (const p of popups) { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.fillText(p.txt, p.x, p.y); }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // ---------- Interface ----------
+  ctx.textAlign = "center"; ctx.fillStyle = "#fff";
+  if (state === "play" || state === "over") {
+    ctx.font = "bold 44px system-ui, sans-serif";
+    ctx.fillText(score, W / 2, 64);
+  }
+  if (state === "menu") {
+    ctx.fillStyle = "rgba(5,6,15,0.6)"; ctx.fillRect(0, 0, W, H); ctx.fillStyle = "#fff";
+    ctx.font = "bold 64px system-ui, sans-serif";
+    ctx.shadowColor = "#4cc9f0"; ctx.shadowBlur = 24;
+    ctx.fillText("ORBITE", W / 2, H * 0.34);
+    ctx.shadowBlur = 0;
+    ctx.font = "18px system-ui, sans-serif"; ctx.fillStyle = "#c9d3ff";
+    ctx.fillText("Touchez ou appuyez sur Espace", W / 2, H * 0.34 + 46);
+    ctx.fillText("pour quitter l'orbite.", W / 2, H * 0.34 + 70);
+    ctx.fillText("Atteignez la planète suivante,", W / 2, H * 0.34 + 106);
+    ctx.fillText("évitez les débris, ramassez les étoiles.", W / 2, H * 0.34 + 130);
+    ctx.font = "bold 24px system-ui, sans-serif"; ctx.fillStyle = "#fff";
+    ctx.globalAlpha = 0.6 + 0.4 * Math.sin(time * 4);
+    ctx.fillText("TOUCHER POUR JOUER", W / 2, H * 0.72);
+    ctx.globalAlpha = 1;
+    if (best > 0) { ctx.font = "16px system-ui, sans-serif"; ctx.fillStyle = "#ffd166"; ctx.fillText("Record : " + best, W / 2, H * 0.72 + 36); }
+  }
+  if (state === "over") {
+    ctx.fillStyle = "rgba(5,6,15,0.55)"; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#fff"; ctx.font = "bold 42px system-ui, sans-serif";
+    ctx.fillText("PERDU !", W / 2, H * 0.38);
+    ctx.font = "22px system-ui, sans-serif";
+    ctx.fillText("Score : " + score, W / 2, H * 0.38 + 50);
+    ctx.fillStyle = newBest ? "#06d6a0" : "#ffd166";
+    ctx.fillText(newBest ? "Nouveau record !" : "Record : " + best, W / 2, H * 0.38 + 84);
+    if (overTimer > 0.6) {
+      ctx.fillStyle = "#fff"; ctx.font = "bold 22px system-ui, sans-serif";
+      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(time * 4);
+      ctx.fillText("TOUCHER POUR REJOUER", W / 2, H * 0.62);
+      ctx.globalAlpha = 1;
+    }
+  }
+  // bouton son
+  ctx.font = "22px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillStyle = "#fff"; ctx.globalAlpha = 0.7;
+  ctx.fillText(muted ? "🔇" : "🔊", W - 28, 36);
+  ctx.globalAlpha = 1;
+}
+
+function drawStar(x, y, r, color) {
+  ctx.save(); ctx.translate(x, y);
+  ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+// ---------- Boucle ----------
+reset();
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt); draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+window.__orbite = { get state() { return state; }, get score() { return score; }, get ship() { return ship; }, get planets() { return planets; }, press };
+</script>
+</body>
+</html>
