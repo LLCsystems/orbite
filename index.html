@@ -144,9 +144,19 @@ function capture(p) {
   // sens de rotation selon la vitesse d'arrivée (produit vectoriel)
   ship.dir = (dx * ship.vy - dy * ship.vx) >= 0 ? 1 : -1;
   if (!p.visited) {
-    p.visited = true; planetsVisited++; score += 1;
-    popups.push({ x: p.x, y: p.y - p.r - 14, txt: "+1", life: 1, color: p.color });
+    // Les planètes sautées (plus bas que celle atteinte) rapportent aussi leur point
+    let gained = 0;
+    for (const q of planets) {
+      if (q !== p && !q.visited && q.y > p.y) {
+        q.visited = true; planetsVisited++; gained++;
+        popups.push({ x: q.x, y: q.y - q.r - 14, txt: "+1", life: 1, color: q.color });
+      }
+    }
+    p.visited = true; planetsVisited++; gained++;
+    score += gained;
+    popups.push({ x: p.x, y: p.y - p.r - 14, txt: gained > 1 ? "+" + gained + " SAUT !" : "+1", life: gained > 1 ? 1.4 : 1, color: p.color });
     sfx.capture(planetsVisited);
+    if (gained > 1) setTimeout(() => sfx.capture(planetsVisited + 4), 90);
   } else {
     sfx.capture(0);
   }
